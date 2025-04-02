@@ -1,0 +1,458 @@
+---
+title: "Analysis_Final_Smruthi"
+author: "Smruthi"
+date: "2024-06-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+## Load Datasets
+Load the datasets from the processed folder.
+```{r}
+file_budget <- "data/processed/la_county_budget.csv"
+file_employees <- "data/processed/la_employees.csv"
+
+budget <- read.csv(file_budget)
+employees <- read.csv(file_employees)
+```
+
+## Look at how number of employees in each ethnicity group has changed over years
+```{r}
+employees_only <- read.csv(file_employees)
+employees_only <- employees_only %>% filter(QUARTER == 4)
+employees_only <- employees_only %>%
+  mutate(ETHNICITY_DESC = case_when(
+    ETHNICITY_DESC %in% c('AMERICAN INDIAN OR ALASKA NATIVE', 'TWO or MORE RACES', 'NATIVE HAWAIIAN or OTHER PACIFIC ISLANDER','AMERICAN INDIAN','DEFAULT - CONVERSION') ~ 'OTHER',
+    ETHNICITY_DESC == 'BLACK OR AFRICAN AMERICAN' ~ 'BLACK/AA',
+    ETHNICITY_DESC == 'HISPANIC OR LATINO' ~ 'HISP/LAT',
+    ETHNICITY_DESC == 'HISPANIC' ~ 'HISP/LAT',
+    ETHNICITY_DESC == 'BLACK' ~ 'BLACK/AA',
+    ETHNICITY_DESC == 'ASIAN / PACIFIC ISLANDERS' ~ 'ASIAN',
+    TRUE ~ ETHNICITY_DESC
+  ))
+employee_count_yr <- employees_only %>%
+  group_by(YEAR,ETHNICITY_DESC) %>%
+  summarise(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT))%>%
+  arrange(desc(TOTAL_EMPLOYEE_COUNT))
+
+png(
+file.path("Employee_Count_vs_Ethnicity_Years.png"),
+width=1080,
+height=800,
+pointsize=30
+)
+ggplot(employee_count_yr, aes(x = YEAR, y = TOTAL_EMPLOYEE_COUNT, color = ETHNICITY_DESC, group = ETHNICITY_DESC)) +
+  geom_line(size = 1) +  # Line for each ethnicity
+  geom_point(size = 2) + # Points for each year
+  geom_text(data = subset(employee_count_yr, YEAR %in% c(2015, 2022)),
+            aes(label = TOTAL_EMPLOYEE_COUNT), vjust = -0.5, size = 3) +
+  labs(title = "Employee Count by Ethnicity Across Years",
+       x = "Year",
+       y = "Employee Count",
+       color = "Ethnicity") +
+  scale_x_continuous(breaks = unique(employee_count_yr$YEAR)) +  
+  scale_y_continuous(breaks = seq(0, max(employee_count_yr$TOTAL_EMPLOYEE_COUNT), by = 5000)) +
+  theme_minimal() +  # Clean theme
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+```
+Take a look at the first few rows of each dataset and the unique values in the year columns.
+```{r}
+#head(budget)
+#head(employees)
+
+# Show unique years in budget
+unique(budget$Budget.Fiscal.Year)
+
+# Show unique year and quarter in employees
+unique(employees[, c("YEAR", "QUARTER")])
+```
+Filter the data to only include the years in common
+```{r}
+years <- intersect(unique(budget$Budget.Fiscal.Year), unique(employees$YEAR))
+
+budget <- budget %>% filter(Budget.Fiscal.Year %in% years)
+employees <- employees %>% filter(YEAR %in% years)
+```
+
+Checking for number of departments and job descriptions in employees table
+```{r}
+unique_departments <- employees %>%
+  distinct(DEPARTMENT_NAME)
+unique_departments_count <- employees %>%
+  summarise(UNIQUE_DEPARTMENTS = n_distinct(DEPARTMENT_NAME))
+unique_positions <- employees %>%
+  distinct(EEOF_LONG_DD)
+```
+
+For employees, we will only consider the employees at the end of the year.
+```{r}
+ employees <- employees %>% filter(QUARTER == 4)
+```
+
+## Ethnicity breakout of employees data
+```{r}
+# Cleaning up Ethnicity_desc variable
+employees1 <- employees %>%
+  mutate(ETHNICITY_DESC = case_when(
+    ETHNICITY_DESC %in% c('AMERICAN INDIAN OR ALASKA NATIVE', 'TWO or MORE RACES', 'NATIVE HAWAIIAN or OTHER PACIFIC ISLANDER') ~ 'OTHER',
+    ETHNICITY_DESC == 'BLACK OR AFRICAN AMERICAN' ~ 'BLACK/AA',
+    ETHNICITY_DESC == 'HISPANIC OR LATINO' ~ 'HISP/LAT',
+    TRUE ~ ETHNICITY_DESC
+  ))
+
+# Removing GENDER_DESC = NonBinary only 3 observations
+employees1 <- employees1 %>%
+  filter(GENDER_DESC != "NonBinry")
+
+ethnicity_breakout <- employees1 %>%
+  group_by(ETHNICITY_DESC) %>%
+  summarise(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT))
+
+ethnicity_breakout<- ethnicity_breakout %>%
+  mutate(Total_Employee_Count_Thousands = TOTAL_EMPLOYEE_COUNT / 1e3)
+
+ggplot(ethnicity_breakout, aes(x = reorder(ETHNICITY_DESC, -Total_Employee_Count_Thousands), y = Total_Employee_Count_Thousands)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs(title = "Employee Counts by Ethnicity",
+       x = "Ethnicity",
+       y = "Total Employee Count(In Thousands)")
+```
+
+```{r}
+png(
+file.path("Employee_Count_vs_Ethnicity.png"),
+width=1080,
+height=800,
+pointsize=30
+)
+ggplot(ethnicity_breakout, aes(x = reorder(ETHNICITY_DESC, -Total_Employee_Count_Thousands), y = Total_Employee_Count_Thousands)) +
+  geom_bar(stat = "identity", position = position_dodge() , fill = "#33DD44AA") +
+  labs(title = "Employee Counts by Ethnicity",
+       x = "Ethnicity",
+       y = "Total Employee Count(In Thousands)") +
+  theme(plot.title = element_text(size = 30, hjust = 0.5),
+axis.title.x = element_text(size = 30), # Adjust x-axis label size
+axis.title.y = element_text(size = 30),
+axis.text.y = element_text(size = 30),
+axis.text.x = element_text(size = 30),
+panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+dev.off()
+```
+
+Regrouping EEOF_LONG_DD(Department Long Description)
+```{r}
+func_code_map <- c(
+  "FINANCIAL ADMIN GENERAL CONTROL" = "FIN ADMIN",
+  "OTHER (SUPPORT SERVICES, LIBRARY AND ED)" = "OTHER",
+  "NATURAL PARKS AND RECREATION" = "OTHER",
+  "PUBLIC WELFARE" = "PUBLIC WELFARE",
+  "FIRE PROTECTION" = "FIRE",
+  "HOSPITALS AND SANITARIUMS" = "HOSPITALS",
+  "HEALTH" = "HEALTH",
+  "CORRECTIONS" = "CORRECTIONS",
+  "POLICE PROTECTION" = "POLICE",
+  "COMMUNITY DEVELOPMENT" = "OTHER",
+  "UTILITIES AND TRANSPORTATION" = "UTIL & TRANS"
+)
+
+# Replace long descriptions with shorter labels
+employees1$EEOF_LONG_DD <- func_code_map[employees1$EEOF_LONG_DD]
+```
+
+## Chi square test on Ethinicity_desc, Gender, Job Positions
+```{r}
+# Contingency table of ethnicity and gender
+contingency_table <- table(employees1$ETHNICITY_DESC, employees1$GENDER_DESC)
+print(contingency_table)
+# Perform chi-square test of independence
+chi_square_test <- chisq.test(contingency_table)
+
+# Print the results
+print(chi_square_test)
+```
+
+```{r}
+contingency_table2 <- table(employees1$EEOF_LONG_DD, employees1$ETHNICITY_DESC)
+chi_square_test <- chisq.test(contingency_table2)
+print(contingency_table2)
+# Print the results
+print(chi_square_test)
+```
+## Gender breakout across departments
+```{r}
+gender_job_breakout <- employees1 %>%
+  group_by(GENDER_DESC, EEOF_LONG_DD) %>%
+  summarize(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  ungroup()
+
+gender_job_breakout <- gender_job_breakout %>%
+  group_by(EEOF_LONG_DD) %>%
+  mutate(percent = TOTAL_EMPLOYEE_COUNT / sum(TOTAL_EMPLOYEE_COUNT) * 100)
+
+ggplot(gender_job_breakout, aes(x = EEOF_LONG_DD, y = TOTAL_EMPLOYEE_COUNT, fill = GENDER_DESC)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(percent, 1), "%")), position = position_stack(vjust = 0.5), size = 3) +
+  labs(title = "Employee Counts by Gender and Department",
+       x = "Department Group",
+       y = "Total Employee Count",
+       fill = "Gender") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+png(
+file.path("Employee_Count_Gender_vs_Dept.png"),
+width=1080,
+height=800,
+pointsize=30
+)
+ggplot(gender_job_breakout, aes(x = EEOF_LONG_DD, y = TOTAL_EMPLOYEE_COUNT, fill = GENDER_DESC)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(percent, 1), "%")), position = position_stack(vjust = 0.5), size = 6, fontface = "bold") +
+  labs(title = "Employee Counts by Gender and Department",
+       x = "Department Group",
+       y = "Total Employee Count",
+       fill = "Gender") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 15), 
+axis.title.x = element_text(size = 25),
+axis.title.y = element_text(size = 25),
+axis.text.y = element_text(size = 25),
+plot.title = element_text(size = 25),
+legend.text = element_text(size = 15),
+panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+dev.off()
+```
+
+```{r}
+# Aggregate the data by ETHNICITY_DESC and EEO_FUNC_CD
+ethnicity_job_breakout <- employees1 %>%
+  group_by(ETHNICITY_DESC, EEOF_LONG_DD) %>%
+  summarize(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  ungroup()
+
+ggplot(ethnicity_job_breakout, aes(x = EEOF_LONG_DD, y = TOTAL_EMPLOYEE_COUNT, fill = ETHNICITY_DESC)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Employee Counts by Functional Code and Ethnicity",
+       x = "Functional Code",
+       y = "Total Employee Count",
+       fill = "Ethnicity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+library(viridis)
+ggplot(ethnicity_job_breakout, aes(x = EEOF_LONG_DD, y = ETHNICITY_DESC, fill = TOTAL_EMPLOYEE_COUNT)) +
+  geom_tile() +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Employee Distribution Heatmap",
+       x = "Job Description Category",
+       y = "Ethnicity",
+       fill = "Employee Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Jobs taken up by different ethnicity groups
+```{r}
+employees1$EEOF_JOB_CATEGORY_DESC <- toupper(employees1$EEO_JOB_CATEGORY_DESC)
+
+job_ethnicity_s_breakout <- employees1 %>%
+  group_by(ETHNICITY_DESC, EEOF_JOB_CATEGORY_DESC) %>%
+  summarize(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  filter(EEOF_JOB_CATEGORY_DESC %in% 
+           c("SUPERVISING OPERATIVES", "SUPERVISING CRAFTS", "SUPERVISING GENERAL SERVICES", "SUPERVISING TECHNICAL", "SUPERVISING PARAPROFESSIONAL","SUPERVISING ADMINSTRATIVE STAFF", "SUPERVISING PROFESSIONAL", "SUPERVISING CLERICAL", "SUPERVISING PROTECTIVE & REGULATORY")) %>%
+  ungroup()
+```
+```{r}
+library(viridis)
+
+job_ethnicity_s_breakout <- job_ethnicity_s_breakout %>%
+  group_by(EEOF_JOB_CATEGORY_DESC) %>%
+  mutate(PERCENTAGE = TOTAL_EMPLOYEE_COUNT / sum(TOTAL_EMPLOYEE_COUNT) * 100)
+
+heatmap1 <- job_ethnicity_s_breakout %>%
+  ggplot(aes(x = EEOF_JOB_CATEGORY_DESC, y = ETHNICITY_DESC, fill = PERCENTAGE)) +
+  geom_tile() +
+  scale_fill_viridis_c(name = "Percentage") +
+  geom_text(aes(label = sprintf("%.1f%%", PERCENTAGE)), color = "black", fontface = "bold") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1,size = 10),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_text(size = 15),  # Adjust size of x-axis title
+        axis.title.y = element_text(size = 15),
+        plot.title = element_text(size = 15)) +
+  labs(title = "Percentage of Employees by Ethnicity and Supervising Roles",
+       x = "Job Category",
+       y = "Ethnicity")
+
+ggsave("heatmap.png", plot = heatmap1, width = 10, height = 8, dpi = 300, type = "cairo", bg = "white")
+```
+
+
+```{r}
+job_ethnicity_s_breakout2 <- employees1 %>%
+  group_by(ETHNICITY_DESC, EEOF_JOB_CATEGORY_DESC) %>%
+  summarize(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  filter(EEOF_JOB_CATEGORY_DESC %in% 
+           c("MANAGEMENT", "EXECUTIVE MANAGEMENT", "MANAGEMENT STAFF")) %>%
+  ungroup()
+
+job_ethnicity_s_breakout2 <- job_ethnicity_s_breakout2 %>%
+  group_by(EEOF_JOB_CATEGORY_DESC) %>%
+  mutate(PERCENTAGE = TOTAL_EMPLOYEE_COUNT / sum(TOTAL_EMPLOYEE_COUNT) * 100)
+
+heatmap2 <- job_ethnicity_s_breakout2 %>%
+  ggplot(aes(x = EEOF_JOB_CATEGORY_DESC, y = ETHNICITY_DESC, fill = PERCENTAGE)) +
+  geom_tile() +
+  scale_fill_viridis_c(name = "Percentage") +
+  geom_text(aes(label = sprintf("%.1f%%", PERCENTAGE)), color = "black", fontface = "bold") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1,size = 10),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_text(size = 15),  # Adjust size of x-axis title
+        axis.title.y = element_text(size = 15),
+        plot.title = element_text(size = 15)) +
+  labs(title = "Percentage of Employees by Ethnicity and Management Role",
+       x = "Job Category",
+       y = "Ethnicity")
+
+ggsave("heatmap2.png", plot = heatmap2, width = 10, height = 8, dpi = 300, type = "cairo", bg = "white")
+```
+```{r}
+job_ethnicity_s_breakout3 <- employees1 %>%
+  group_by(ETHNICITY_DESC, EEOF_JOB_CATEGORY_DESC) %>%
+  summarize(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  filter(EEOF_JOB_CATEGORY_DESC %in% 
+           c("CRAFTS", "OPERATIVES", "TECHNICAL", "GENERAL SERVICE", "PARAPROFESSIONAL", "PROTECTIVE & REGULATORY", "PROFESSIONAL", "CLERICAL")) %>%
+  ungroup()
+
+job_ethnicity_s_breakout3 <- job_ethnicity_s_breakout3 %>%
+  group_by(EEOF_JOB_CATEGORY_DESC) %>%
+  mutate(PERCENTAGE = TOTAL_EMPLOYEE_COUNT / sum(TOTAL_EMPLOYEE_COUNT) * 100)
+
+# Create the heatmap
+heatmap3 <- job_ethnicity_s_breakout3 %>%
+  ggplot(aes(x = EEOF_JOB_CATEGORY_DESC, y = ETHNICITY_DESC, fill = PERCENTAGE)) +
+  geom_tile() +
+  scale_fill_viridis_c(name = "Percentage") +
+  geom_text(aes(label = sprintf("%.1f%%", PERCENTAGE)), color = "white", fontface = "bold") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Employee Percentage Across Ethnicities and Regular Jobs")
+
+ggsave("heatmap3.png", plot = heatmap3, width = 10, height = 8, dpi = 300, type = "cairo", bg = "white")
+```
+
+```{r}
+contingency_table3 <- table(employees1$EEOF_JOB_CATEGORY_DESC, employees1$ETHNICITY_DESC)
+chi_square_test <- chisq.test(contingency_table3)
+print(contingency_table3)
+# Print the results
+print(chi_square_test)
+```
+## Merging budget data with ethnicity data
+```{r}
+library(tidyverse)
+employee_count_qtr_yr <- employees1 %>%
+  group_by(EEOF_LONG_DD, ETHNICITY_DESC) %>%
+  summarise(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT))%>%
+  spread(key = ETHNICITY_DESC, value = TOTAL_EMPLOYEE_COUNT, fill = 0)
+
+employee_count_qtr_yr1 <- employees1 %>%
+  group_by(DEPARTMENT_CD, ETHNICITY_DESC) %>%
+  summarise(TOTAL_EMPLOYEE_COUNT = sum(EMPLOYEE_COUNT)) %>%
+  spread(key = ETHNICITY_DESC, value = TOTAL_EMPLOYEE_COUNT, fill = 0)
+
+budget <- budget %>% filter(Budget.Fiscal.Year == 2022)
+
+budget_by_year_department <- budget %>%
+  group_by(Department.Code) %>%
+  summarise(Total_Budget = sum(Adjusted.Budget)) %>%
+  arrange(desc(Total_Budget))
+
+data1 <- merge(
+    budget_by_year_department,
+    employee_count_qtr_yr1,
+    by.x = c("Department.Code"),
+    by.y = c("DEPARTMENT_CD")
+)
+
+dept_mapping <- data.frame(
+  Department.Code = c("CS", "RP", "PB", "AD", "AN", "AO", "AS", "AU", "AW", "BS", 
+               "CC", "CD", "DA", "HM", "IO", "IS", "PD", "RR", "TT", "FR", 
+               "HA", "HC", "HJ", "HP", "HS", "MH", "PG", "PH", "PP", 
+               "HG", "HH", "HN", "HO", "HR", "PR", "PS", "AR", "BH", "NH", 
+               "PK", "RT", "AG", "CA", "CR", "EW", "JC", "MV", "PL", "YD", 
+               "ME", "SH", "CH", "SS", "PW"),
+  Category = c("OTHER", "OTHER", "CORRECTIONS", 
+               "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", 
+               "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", 
+               "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", "FIN ADMIN", 
+               "FIN ADMIN", "FIRE", "HEALTH", "HEALTH", "HEALTH", 
+               "HEALTH", "HEALTH", "HEALTH", "HEALTH", "HEALTH", "HEALTH", 
+               "HOSPITALS", "HOSPITALS", "HOSPITALS", "HOSPITALS", "HOSPITALS", 
+               "HOSPITALS", "HOSPITALS", "OTHER", "OTHER", 
+               "OTHER", "OTHER", "OTHER", "OTHER", "OTHER", 
+               "OTHER", "OTHER", "OTHER", "OTHER", "OTHER", "OTHER", 
+               "POLICE", "POLICE", "PUB WELFARE", "PUB WELFARE", 
+               "UTIL & TRANS")
+)
+merged_df <- merge(budget_by_year_department, dept_mapping, by = "Department.Code", all.x = TRUE)
+data2 <- merge(
+    merged_df,
+    employee_count_qtr_yr,
+    by.x = c("Category"),
+    by.y = c("EEOF_LONG_DD")
+)
+# data1$Budget_by_Employee <- data1$Total_Budget / data1$TOTAL_EMPLOYEE_COUNT
+```
+## Run k-means clustering to see if certain ethnic groups belong to certain departments
+```{r}
+  # Remove Department.Code column
+rownames(data1) <- data1$Department.Code  # Set row names as Department.Code
+data_c <- data1[, -1]
+data_c <- data_c[ , !(names(data_c) %in% c("Total_Budget"))]
+# Standardize the data
+scaled_data <- scale(data_c)
+
+# Determine the optimal number of clusters using the elbow method
+wss <- sapply(1:10, function(k) kmeans(scaled_data, k)$tot.withinss)
+plot(1:10, wss, type = "b", xlab = "Number of Clusters", ylab = "Within-cluster sum of squares")
+
+# Based on the plot, select the number of clusters (elbow point)
+# Let's say we choose k = 5
+
+# Perform k-means clustering
+k <- 5
+kmeans_result <- kmeans(scaled_data, centers = k)
+
+# Add cluster labels to the original data
+data_c$Cluster <- as.factor(kmeans_result$cluster)
+
+# Print the cluster centers
+print(kmeans_result$centers)
+
+# View the cluster assignments
+employees_data_with_clusters <- cbind(data1["Department.Code"], Cluster = kmeans_result$cluster)
+
+# View the updated data frame
+print(employees_data_with_clusters)
+```
+
+
+
+
+
